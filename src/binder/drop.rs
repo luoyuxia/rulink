@@ -1,0 +1,82 @@
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
+use pretty_xmlish::helper::delegate_fmt;
+use pretty_xmlish::Pretty;
+use sqlparser::ast::{ObjectName, ObjectType};
+use crate::binder::Binder;
+use std::result::Result as RawResult;
+
+use super::*;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
+pub struct BoundDrop {
+    pub object: Object,
+    pub if_exists: bool,
+    pub cascade: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
+pub enum Object {
+    Table(TableRefId),
+}
+
+impl Display for BoundDrop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let explainer = Pretty::childless_record("Drop", self.pretty_table());
+        delegate_fmt(&explainer, f, String::with_capacity(1000))
+    }
+}
+
+impl std::fmt::Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Object::Table(table_id_ref) => write!(f, "table {}", table_id_ref),
+        }
+    }
+}
+
+impl FromStr for BoundDrop {
+    type Err = ();
+
+    fn from_str(_s: &str) -> RawResult<Self, Self::Err> {
+        Err(())
+    }
+}
+
+impl BoundDrop {
+    pub fn pretty_table<'a>(&self) -> Vec<(&'a str, Pretty<'a>)> {
+        vec![
+            ("object", Pretty::display(&self.object)),
+            ("if_exists", Pretty::display(&self.if_exists)),
+            ("cascade", Pretty::display(&self.cascade)),
+        ]
+    }
+}
+
+
+
+impl Binder {
+    pub(super) fn bind_drop(&mut self,
+                            object_type: ObjectType,
+                            if_exists: bool,
+                            names: Vec<ObjectName>,
+                            cascade: bool) -> Result {
+        match object_type {
+            ObjectType::Table => {
+                let name = lower_case_name(&names[0]);
+                let (schema_name, table_name) = split_name(&name)?;
+                let table_ref_id = self.catalog
+                    .get_table_id_by_name(schema_name, table_name)
+                    .ok_or_else(|| BindError::InvalidTable(table_name.into()))?;
+                Ok(self.egraph.add(Node::Drop(BoundDrop {
+                    object: Object::Table(table_ref_id),
+                    if_exists,
+                    cascade,
+                })))
+            },
+            _ => {
+                todo!()
+            }
+        }
+    }
+}
